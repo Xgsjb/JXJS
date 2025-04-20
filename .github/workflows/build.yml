@@ -166,7 +166,7 @@ jobs:
 
       - name: Build
         run: |
-          ./.ci/linux.sh v3 4
+          ./.ci/linux.sh v3 8
 
       - name: Package AppImage
         run: |
@@ -200,11 +200,6 @@ jobs:
               echo "GIT_TAG_NAME=$GITHUB_REF_NAME" >> $GITHUB_ENV
           fi
           echo $GIT_TAG_NAME
-
-      - name: Deps
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install ccache glslang-dev glslang-tools apksigner -y
 
       - name: Build
         run: JAVA_HOME=$JAVA_HOME_21_X64 ./.ci/android.sh
