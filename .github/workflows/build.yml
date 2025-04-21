@@ -170,7 +170,7 @@ jobs:
 
       - name: Package AppImage
         run: |
-          ./.ci/package-appimage.sh v3
+          ./.ci/package-appimage.sh v3 &> /dev/null
 
       - name: Upload Linux artifacts
         uses: forgejo/upload-artifact@v4
