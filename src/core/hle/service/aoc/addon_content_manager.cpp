@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+
 #include <algorithm>
 #include <numeric>
 #include <vector>
@@ -16,6 +20,7 @@
 #include "core/file_sys/registered_cache.h"
 #include "core/hle/kernel/k_event.h"
 #include "core/hle/service/aoc/addon_content_manager.h"
+#include "core/file_sys/external_content_manager.h"
 #include "core/hle/service/aoc/purchase_event_manager.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/ipc_helpers.h"
@@ -30,6 +35,8 @@ static bool CheckAOCTitleIDMatchesBase(u64 title_id, u64 base) {
 
 static std::vector<u64> AccumulateAOCTitleIDs(Core::System& system) {
     std::vector<u64> add_on_content;
+
+    // Nand DLC
     const auto& rcu = system.GetContentProvider();
     const auto list =
         rcu.ListEntriesFilter(FileSys::TitleType::AOC, FileSys::ContentRecordType::Data);
@@ -43,6 +50,25 @@ static std::vector<u64> AccumulateAOCTitleIDs(Core::System& system) {
                        Loader::ResultStatus::Success;
             }),
         add_on_content.end());
+
+    // External DLC
+    if (auto external_manager = FileSys::GetExternalContentManager()) {
+        const auto current_app_id = system.GetApplicationProcessProgramID();
+        const auto base_id = FileSys::GetBaseTitleID(current_app_id);
+
+        const auto& disabled = Settings::values.disabled_addons[base_id];
+        const bool external_dlc_disabled = std::find_if(disabled.cbegin(), disabled.cend(),
+                  [](const std::string& name) { return name.starts_with("DLC (File):"); }) != disabled.cend();
+
+        if (!external_dlc_disabled) {
+            for (const auto& [dlc_id, mapped_base_id] : external_manager->GetExternalDLCMapping()) {
+                if (mapped_base_id == base_id) {
+                    add_on_content.push_back(dlc_id);
+                }
+            }
+        }
+    }
+
     return add_on_content;
 }
 
@@ -91,7 +117,8 @@ Result IAddOnContentManager::CountAddOnContent(Out<u32> out_count, ClientProcess
     const auto current = system.GetApplicationProcessProgramID();
 
     const auto& disabled = Settings::values.disabled_addons[current];
-    if (std::find(disabled.begin(), disabled.end(), "DLC") != disabled.end()) {
+    if (std::find(disabled.begin(), disabled.end(), "DLC") != disabled.end() ||
+        std::find(disabled.begin(), disabled.end(), "DLC (File):") != disabled.end()) {
         *out_count = 0;
         R_SUCCEED();
     }
@@ -113,7 +140,8 @@ Result IAddOnContentManager::ListAddOnContent(Out<u32> out_count,
 
     std::vector<u32> out;
     const auto& disabled = Settings::values.disabled_addons[current];
-    if (std::find(disabled.begin(), disabled.end(), "DLC") == disabled.end()) {
+    if (std::find(disabled.begin(), disabled.end(), "DLC") == disabled.end() ||
+        std::find(disabled.begin(), disabled.end(), "DLC (File):") == disabled.end()) {
         for (u64 content_id : add_on_content) {
             if (FileSys::GetBaseTitleID(content_id) != current) {
                 continue;

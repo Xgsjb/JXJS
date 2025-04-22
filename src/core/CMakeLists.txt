@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: 2018 yuzu Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+# SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 add_library(core STATIC
     arm/arm_interface.cpp
     arm/arm_interface.h
@@ -175,6 +178,8 @@ add_library(core STATIC
     file_sys/vfs/vfs_vector.h
     file_sys/xts_archive.cpp
     file_sys/xts_archive.h
+    file_sys/external_content_manager.cpp
+    file_sys/external_content_manager.h
     frontend/applets/cabinet.cpp
     frontend/applets/cabinet.h
     frontend/applets/controller.cpp

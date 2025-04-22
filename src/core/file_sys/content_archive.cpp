@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <algorithm>
 #include <cstring>
 #include <optional>
@@ -117,9 +120,7 @@ NCA::NCA(VirtualFile file_, const NCA* base_nca)
     }
 
     if (is_update && base_nca == nullptr) {
-        status = Loader::ResultStatus::ErrorMissingBKTRBaseRomFS;
-    } else {
-        status = Loader::ResultStatus::Success;
+        // Ignore this for now to allow external addOns; it shouldn't affect anything
     }
 }
 

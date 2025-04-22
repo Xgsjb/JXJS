@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <cinttypes>
 #include <cstring>
 #include <iterator>
@@ -34,6 +37,8 @@
 #include "core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.h"
 #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
 #include "core/hle/service/filesystem/fsp/fsp_srv.h"
+
+#include "core/file_sys/external_content_manager.h"
 #include "core/hle/service/filesystem/fsp/save_data_transfer_prohibiter.h"
 #include "core/hle/service/filesystem/romfs_controller.h"
 #include "core/hle/service/filesystem/save_data_controller.h"
@@ -41,6 +46,8 @@
 #include "core/hle/service/ipc_helpers.h"
 #include "core/loader/loader.h"
 #include "core/reporter.h"
+#include "core/file_sys/common_funcs.h"
+#include "core/file_sys/submission_package.h"
 
 namespace Service::FileSystem {
 
@@ -426,6 +433,10 @@ Result FSP_SRV::OpenDataStorageByDataId(OutInterface<IStorage> out_interface,
     LOG_DEBUG(Service_FS, "called with storage_id={:02X}, unknown={:08X}, title_id={:016X}",
               storage_id, unknown, title_id);
 
+    if (TryOpenExternalDLC(out_interface, title_id)) {
+        R_SUCCEED();
+    }
+
     auto data = romfs_controller->OpenRomFS(title_id, storage_id, FileSys::ContentRecordType::Data);
 
     if (!data) {
@@ -452,6 +463,54 @@ Result FSP_SRV::OpenDataStorageByDataId(OutInterface<IStorage> out_interface,
 
     *out_interface = std::move(storage);
     R_SUCCEED();
+}
+
+bool FSP_SRV::TryOpenExternalDLC(OutInterface<IStorage>& out_interface, u64 title_id) const {
+    auto external_manager = FileSys::GetExternalContentManager();
+    if (!external_manager) {
+        return false;
+    }
+
+    const auto base_title_id = FileSys::GetBaseTitleID(title_id);
+        if (!external_manager->HasExternalDLC(base_title_id)) {
+        return false;
+    }
+
+    auto dlc_file = external_manager->GetExternalDLCFileByID(title_id);
+    if (!dlc_file) {
+        return false;
+    }
+
+    const auto nsp = std::make_shared<FileSys::NSP>(dlc_file);
+    if (nsp->GetStatus() != Loader::ResultStatus::Success) {
+        LOG_ERROR(Service_FS, "NSP creation failed for DLC title_id={:016X}", title_id);
+        return false;
+    }
+
+    std::shared_ptr<FileSys::NCA> data_nca = nullptr;
+
+    for (const auto& nca : nsp->GetNCAsCollapsed()) {
+        if (nca->GetType() == FileSys::NCAContentType::Data ||
+            nca->GetType() == FileSys::NCAContentType::PublicData) {
+            data_nca = nca;
+            break;
+        }
+    }
+
+    if (!data_nca || data_nca->GetStatus() != Loader::ResultStatus::Success) {
+        LOG_ERROR(Service_FS, "Could not find Data NCA in NSP for title_id={:016X}", title_id);
+        return false;
+    }
+
+    auto dlc_romfs = data_nca->GetRomFS();
+    if (!dlc_romfs) {
+        LOG_ERROR(Service_FS, "Data NCA exists but has no RomFS for title_id={:016X}", title_id);
+        return false;
+    }
+
+    *out_interface = std::make_shared<IStorage>(system, dlc_romfs);
+    LOG_INFO(Service_FS, "Successfully opened external DLC for title_id={:016X}", title_id);
+    return true;
 }
 
 Result FSP_SRV::OpenPatchDataStorageByCurrentProcess(OutInterface<IStorage> out_interface,

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #pragma once
 
 #include <map>
@@ -21,7 +24,7 @@ class FileSystemController;
 }
 
 namespace FileSys {
-
+class ExternalContentManager;
 class ContentProvider;
 class NCA;
 class NACP;
@@ -76,6 +79,37 @@ public:
                                          VirtualFile packed_update_raw = nullptr,
                                          bool apply_layeredfs = true) const;
 
+    /**
+     * Applies an external update file to patch a game's RomFS.
+     * @param base_nca The base NCA of the content being patched
+     * @param base_romfs The original RomFS to be patched
+     * @param external_update The external update file (NSP/XCI) containing the update
+     * @param type The type of content being patched (Program, Control, etc.)
+     * @return Patched RomFS VirtualFile if successful, nullptr otherwise
+     */
+    VirtualFile PatchRomFSWithExternal(const NCA *base_nca, VirtualFile base_romfs,
+                                       VirtualFile external_update, ContentRecordType type) const;
+
+    /**
+     * Applies an external update file to patch a game's ExeFS.
+     * @param exefs The original ExeFS to be patched
+     * @param base_nca The base NCA of the content being patched
+     * @param external_update The external update file (NSP/XCI) containing the update
+     * @return Patched ExeFS VirtualDir if successful, nullptr otherwise
+     */
+    VirtualDir PatchExeFSWithExternal(VirtualDir exefs, const NCA *base_nca, VirtualFile external_update) const;
+
+
+    /**
+     *  Extract an NCA of the specified type from an external update file.
+     * @param update_file The external update file (NSP/XCI)
+     * @param type The type of NCA to extract (Program, Control, etc.)
+     * @param base_nca The base NCA to use as a template for the update NCA
+     * @return Shared pointer to the extracted and templated NCA if successful, nullptr otherwise
+     */
+    std::shared_ptr<NCA> GetNCAfromExternalFile(VirtualFile update_file, ContentRecordType type,
+                                                const NCA *base_nca) const;
+
     // Returns a vector of patches
     [[nodiscard]] std::vector<Patch> GetPatches(VirtualFile update_raw = nullptr) const;
 
@@ -95,9 +129,18 @@ private:
     [[nodiscard]] std::vector<VirtualFile> CollectPatches(const std::vector<VirtualDir>& patch_dirs,
                                                           const std::string& build_id) const;
 
+    /**
+     * Checks if a specific feature is disabled in user settings for this title.
+     * @param feature_name The string name of the addon to check against
+     * @param check_prefix If true, checks if the addon name starts with the given string else it's a literal check
+     */
+    bool IsAddOnDisabled(const std::string &feature_name, bool check_prefix) const;
+
+
     u64 title_id;
     const Service::FileSystem::FileSystemController& fs_controller;
     const ContentProvider& content_provider;
+    std::shared_ptr<ExternalContentManager> external_manager;
 };
 
 } // namespace FileSys

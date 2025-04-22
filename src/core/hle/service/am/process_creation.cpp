@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "core/core.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/nca_metadata.h"
@@ -8,6 +11,7 @@
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/romfs_factory.h"
 #include "core/hle/service/am/process_creation.h"
+#include "core/file_sys/external_content_manager.h"
 #include "core/hle/service/glue/glue_manager.h"
 #include "core/hle/service/os/process.h"
 #include "core/loader/loader.h"
@@ -97,18 +101,32 @@ std::unique_ptr<Process> CreateApplicationProcess(std::vector<u8>& out_control,
     }
 
     FileSys::NACP nacp;
-    if (out_loader->ReadControlData(nacp) == Loader::ResultStatus::Success) {
-        out_control = nacp.GetRawBytes();
-    } else {
-        out_control.resize(sizeof(FileSys::RawNACP));
-        std::fill(out_control.begin(), out_control.end(), (u8) 0);
+    bool nacp_loaded = false;
+    auto& storage = system.GetContentProviderUnion();
+    FileSys::PatchManager pm{program_id, system.GetFileSystemController(), storage};
+
+
+    const auto metadata = pm.GetControlMetadata();
+    if (metadata.first) {
+        out_control = metadata.first->GetRawBytes();
+        nacp_loaded = true;
     }
 
-    auto& storage = system.GetContentProviderUnion();
+    //  Fall back to the loader's NACP if no metadata was found through PatchManager
+    if (!nacp_loaded && out_loader->ReadControlData(nacp) == Loader::ResultStatus::Success) {
+        out_control = nacp.GetRawBytes();
+        nacp_loaded = true;
+    }
+
+    if (!nacp_loaded) {
+        LOG_WARNING(Service_AM, "Failed to load NACP data, filling with zeros.");
+        out_control.resize(sizeof(FileSys::RawNACP));
+        std::fill(out_control.begin(), out_control.end(), u8{0});
+    }
+
     Service::Glue::ApplicationLaunchProperty launch{};
     launch.title_id = process->GetProgramId();
 
-    FileSys::PatchManager pm{launch.title_id, system.GetFileSystemController(), storage};
     launch.version = pm.GetGameVersion().value_or(0);
 
     // TODO(DarkLordZach): When FSController/Game Card Support is added, if
