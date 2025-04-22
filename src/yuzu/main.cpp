@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright yuzu/Citra Emulator Project / Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <cinttypes>
 #include <clocale>
 #include <cmath>
@@ -24,6 +27,8 @@
 #include <boost/container/flat_set.hpp>
 
 // VFS includes must be before glad as they will conflict with Windows file api, which uses defines.
+#include "core/file_sys/external_content_manager.h"
+
 #include "applets/qt_amiibo_settings.h"
 #include "applets/qt_controller.h"
 #include "applets/qt_error.h"
@@ -302,6 +307,7 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
     SetGamemodeEnabled(Settings::values.enable_gamemode.GetValue());
 #endif
     system->Initialize();
+    RegisterExternalAddons();
 
     Common::Log::Initialize();
     Common::Log::Start();
@@ -332,6 +338,7 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
     RegisterMetaTypes();
 
     InitializeWidgets();
+    SaveExternalAddons();
     InitializeDebugWidgets();
     InitializeRecentFileMenuActions();
     InitializeHotkeys();
@@ -557,6 +564,24 @@ GMainWindow::~GMainWindow() {
     ::close(sig_interrupt_fds[0]);
     ::close(sig_interrupt_fds[1]);
 #endif
+}
+
+void GMainWindow::RegisterExternalAddons() {
+    const auto external_config_path = Common::FS::GetYuzuPath(Common::FS::YuzuPath::ConfigDir) / "external_addon_paths.txt";
+    auto external_manager = FileSys::GetExternalContentManager();
+    external_manager->LoadRegisteredPaths(external_config_path.string());
+}
+
+void GMainWindow::SaveExternalAddons() {
+    const auto external_config_path = Common::FS::GetYuzuPath(Common::FS::YuzuPath::ConfigDir) / "external_addon_paths.txt";
+    auto external_manager = FileSys::GetExternalContentManager();
+    LOG_INFO(Frontend, "Saving external file list...");
+    external_manager->SaveRegisteredPaths(external_config_path.string());
+
+    // Clear the game list cache before repopulating
+    Common::FS::RemoveDirRecursively(Common::FS::GetYuzuPath(Common::FS::YuzuPath::CacheDir) / "game_list");
+
+    game_list->PopulateAsync(UISettings::values.game_dirs);
 }
 
 void GMainWindow::RegisterMetaTypes() {
@@ -1516,6 +1541,8 @@ void GMainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Install_File_NAND, &GMainWindow::OnMenuInstallToNAND);
     connect_menu(ui->action_Exit, &QMainWindow::close);
     connect_menu(ui->action_Load_Amiibo, &GMainWindow::OnLoadAmiibo);
+    connect_menu(ui->action_Select_External_File ,
+                 &GMainWindow::OnMenuSelectExternalFile);
 
     // Emulation
     connect_menu(ui->action_Pause, &GMainWindow::OnPauseContinueGame);
@@ -5154,6 +5181,71 @@ Service::AM::FrontendAppletParameters GMainWindow::LibraryAppletParameters(
         .applet_id = applet_id,
         .applet_type = Service::AM::AppletType::LibraryApplet,
     };
+}
+
+void GMainWindow::OnMenuSelectExternalFile() {
+    if (system->IsPoweredOn()) {
+        QMessageBox::warning(this, tr("Error"),
+                            tr("The game is running. Please close the game to select external files."));
+        return;
+    }
+
+    const QString extensions = tr("Nintendo Submission Package (*.nsp);;NX Card Image (*.xci)");
+    QString starting_dir = QString::fromStdString(UISettings::values.roms_path);
+    const QString file_path = QFileDialog::getOpenFileName(this, tr("Select External File"),
+                                                          starting_dir, extensions);
+    if (file_path.isEmpty()) {
+        return;
+    }
+
+    if (!QFile::exists(file_path)) {
+        QMessageBox::warning(this, tr("Error"), tr("Selected file does not exist."));
+        return;
+    }
+
+    QFile test_file(file_path);
+    if (!test_file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, tr("Error"),
+                            tr("Selected file is not readable. Check file permissions."));
+        return;
+    }
+    test_file.close();
+
+    const auto file_path_std = file_path.toStdString();
+    const auto extension = QString::fromStdString(Common::ToLower(std::filesystem::path(file_path_std).extension().string()));
+
+    bool success = false;
+
+    if (extension == QStringLiteral(".nsp")) {
+        QProgressDialog progress(tr("Loading NSP file..."), tr("Cancel"), 0, 0, this);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.show();
+        QApplication::processEvents();
+
+        try {
+            success = FileSys::GetExternalContentManager()->RequestRegisterExternalNSP(file_path_std);
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Error"),
+                                            tr("An error occurred processing the NSP file:\n%1").arg(QString::fromStdString(e.what())));
+            return;
+        }
+
+        progress.close();
+    } else {
+        QMessageBox::warning(this, tr("Error"),
+                            tr("Unsupported file format. Supported formats are NSP and XCI."));
+        return;
+    }
+
+    if (!success) {
+        QMessageBox::warning(this, tr("Error"),
+                            tr("Failed to register external file. It might be an invalid or unsupported format."));
+        return;
+    }
+
+    SaveExternalAddons();
+    QMessageBox::information(this, tr("Success"),
+                            tr("External file successfully registered. It will be available as an update or DLC for matching games."));
 }
 
 void VolumeButton::wheelEvent(QWheelEvent* event) {

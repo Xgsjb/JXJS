@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2014 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #pragma once
 
 #include <memory>
@@ -325,6 +328,10 @@ private:
     Service::AM::FrontendAppletParameters ApplicationAppletParameters();
     Service::AM::FrontendAppletParameters LibraryAppletParameters(u64 program_id,
                                                                   Service::AM::AppletId applet_id);
+
+    void OnMenuSelectExternalFile();
+    void RegisterExternalAddons();
+    void SaveExternalAddons();
 
 private slots:
     void OnStartGame();

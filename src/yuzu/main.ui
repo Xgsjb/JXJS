@@ -69,6 +69,8 @@
     <addaction name="action_Open_yuzu_Folder"/>
     <addaction name="separator"/>
     <addaction name="action_Exit"/>
+    <addaction name="separator"/>
+    <addaction name="action_Select_External_File"/>
    </widget>
    <widget class="QMenu" name="menu_Emulation">
     <property name="title">
@@ -207,6 +209,16 @@
   <action name="action_Load_File">
    <property name="text">
     <string>L&amp;oad File...</string>
+   </property>
+  </action>
+  <action name="action_Select_External_File">
+   <property name="text">
+    <string>Select External Addon File...</string>
+   </property>
+  </action>
+  <action name="action_Manage_External_Files">
+   <property name="text">
+    <string>Manage External Files...</string>
    </property>
   </action>
   <action name="action_Load_Folder">

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -30,39 +33,7 @@
 #include "yuzu/uisettings.h"
 
 namespace {
-
-QString GetGameListCachedObject(const std::string& filename, const std::string& ext,
-                                const std::function<QString()>& generator) {
-    if (!UISettings::values.cache_game_list || filename == "0000000000000000") {
-        return generator();
-    }
-
-    const auto path =
-        Common::FS::PathToUTF8String(Common::FS::GetYuzuPath(Common::FS::YuzuPath::CacheDir) /
-                                     "game_list" / fmt::format("{}.{}", filename, ext));
-
-    void(Common::FS::CreateParentDirs(path));
-
-    if (!Common::FS::Exists(path)) {
-        const auto str = generator();
-
-        QFile file{QString::fromStdString(path)};
-        if (file.open(QFile::WriteOnly)) {
-            file.write(str.toUtf8());
-        }
-
-        return str;
-    }
-
-    QFile file{QString::fromStdString(path)};
-    if (file.open(QFile::ReadOnly)) {
-        return QString::fromUtf8(file.readAll());
-    }
-
-    return generator();
-}
-
-std::pair<std::vector<u8>, std::string> GetGameListCachedObject(
+    std::pair<std::vector<u8>, std::string> GetGameListCachedObject(
     const std::string& filename, const std::string& ext,
     const std::function<std::pair<std::vector<u8>, std::string>()>& generator) {
     if (!UISettings::values.cache_game_list || filename == "0000000000000000") {
@@ -217,10 +188,11 @@ QList<QStandardItem*> MakeGameListEntry(const std::string& path, const std::stri
         new GameListItemPlayTime(play_time_manager.GetPlayTime(program_id)),
     };
 
-    const auto patch_versions = GetGameListCachedObject(
-        fmt::format("{:016X}", patch.GetTitleID()), "pv.txt", [&patch, &loader] {
-            return FormatPatchNameVersions(patch, loader, loader.IsRomFSUpdatable());
-        });
+    // Don't use cache for patch version info - TODO: Actually make this work and cahce both external
+    // and nand updates / DLCs
+    // Right now, the cache is generated too soon and due to cotnent privder chanes
+    // only edternal updates/DLCs are cached.
+    const auto patch_versions = FormatPatchNameVersions(patch, loader, loader.IsRomFSUpdatable());
     list.insert(2, new GameListItem(patch_versions));
 
     return list;
