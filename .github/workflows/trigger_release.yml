@@ -41,6 +41,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up vcpkg cache
         uses: actions/cache@v4
@@ -59,67 +60,18 @@ jobs:
 
       - name: Cygwin with autoconf # NEEDED FOR LIBUSB
         shell: cmd
-        run: |
-          C:\tools\cygwin\cygwinsetup.exe -q -P autoconf,automake,libtool,make,pkg-config
+        run: ./.ci/windows/cygwin.bat
 
-          REM Create wrapper batch files for Cygwin tools in a directory that will be in PATH
-          REM mkdir C:\cygwin-wrappers
-
-          REM Create autoconf.bat wrapper
-          echo @echo off > C:\cygwin-wrappers\autoconf.bat
-          echo C:\tools\cygwin\bin\bash.exe -l -c "autoconf %%*" >> C:\cygwin-wrappers\autoconf.bat
-
-          REM Add other wrappers if needed for other Cygwin tools
-          echo @echo off > C:\cygwin-wrappers\automake.bat
-          echo C:\tools\cygwin\bin\bash.exe -l -c "automake %%*" >> C:\cygwin-wrappers\automake.bat
-
-          REM Add the wrappers directory to PATH
-          echo C:\cygwin-wrappers>>"%GITHUB_PATH%"
-          echo C:\tools\cygwin\bin>>"%GITHUB_PATH%"
-
-      - name: CMake Configure
+      - name: Configure & Build
         id: cmake
         shell: cmd
-        run: |
-          mkdir build
-          cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_TOOLCHAIN_FILE="%CD%\..\CMakeModules\MSVCCache.cmake" -DYUZU_USE_BUNDLED_QT=ON -DENABLE_QT_TRANSLATION=ON -DUSE_DISCORD_PRESENCE=ON -DYUZU_USE_BUNDLED_VCPKG=ON -DYUZU_USE_BUNDLED_SDL2=ON -DUSE_CCACHE=ON
-
-      - name: Build
-        id: build
-        shell: cmd
-        run: |
-          cd build
-          ninja yuzu yuzu-cmd yuzu-room tests
-          ccache -s -v
+        run: ./.ci/windows/build-bqt.bat amd64 no
 
       - name: Package artifacts
-        if: steps.build.outcome == 'success'
         shell: powershell
-        run: |
-          $GITDATE = $(git show -s --date=short --format='%ad') -replace "-", ""
-          $GITREV = $(git show -s --format='%h')
-          $RELEASE_DIST = "eden-windows-msvc"
-          $ARTIFACTS_DIR = "${{ github.workspace }}/artifacts"
-
-          mkdir -p $ARTIFACTS_DIR
-          mkdir -p $RELEASE_DIST
-
-          Copy-Item "build/bin/Release/*" -Destination "$RELEASE_DIST" -Recurse -ErrorAction SilentlyContinue
-          if (-not $?) {
-            # Try without Release subfolder if that doesn't exist
-            Copy-Item "build/bin/*" -Destination "$RELEASE_DIST" -Recurse -ErrorAction SilentlyContinue
-          }
-
-          $BUILD_ZIP = "eden-windows-msvc-$GITDATE-$GITREV.zip"
-          7z a -tzip $BUILD_ZIP $RELEASE_DIST\*
-          
-          Move-Item $BUILD_ZIP $ARTIFACTS_DIR/ -ErrorAction SilentlyContinue
-          Copy-Item "LICENSE*" -Destination "$RELEASE_DIST" -ErrorAction SilentlyContinue
-          Copy-Item "README*" -Destination "$RELEASE_DIST" -ErrorAction SilentlyContinue
+        run: ./.ci/windows/package.ps1 amd64 no
 
       - name: Upload Windows artifacts
-        if: steps.build.outcome == 'success'
         uses: forgejo/upload-artifact@v4
         with:
           name: ${{ matrix.target }}.zip
@@ -137,16 +89,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
           fetch-tags: true
 
       - name: Build
-        run: |
-          ./.ci/linux.sh v3 8
+        run: ./.ci/linux/build.sh v3 8
 
       - name: Package AppImage
-        run: |
-          ./.ci/package-appimage.sh v3 &> /dev/null
+        run: ./.ci/linux/package.sh v3 &> /dev/null
 
       - name: Upload Linux artifacts
         uses: forgejo/upload-artifact@v4
@@ -169,6 +119,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Set tag name
         run: |
@@ -178,27 +129,10 @@ jobs:
           echo $GIT_TAG_NAME
 
       - name: Build
-        run: JAVA_HOME=$JAVA_HOME_21_X64 ./.ci/android.sh
+        run: JAVA_HOME=$JAVA_HOME_21_X64 ./.ci/android/build.sh
 
       - name: Package Android artifacts
-        run: |
-          GITDATE="$(git show -s --date=short --format='%ad' | sed 's/-//g')"
-          GITREV="$(git show -s --format='%h')"
-          ARTIFACTS_DIR="$PWD/artifacts"
-          mkdir -p "${ARTIFACTS_DIR}/"
-
-          REV_NAME="eden-android-${GITDATE}-${GITREV}"
-          BUILD_FLAVOR="mainline"
-          BUILD_TYPE_LOWER="release"
-          BUILD_TYPE_UPPER="Release"
-
-          cp src/android/app/build/outputs/apk/"${BUILD_FLAVOR}/${BUILD_TYPE_LOWER}/app-${BUILD_FLAVOR}-${BUILD_TYPE_LOWER}.apk" \
-             "${ARTIFACTS_DIR}/${REV_NAME}.apk" || echo "APK not found"
-
-          cp src/android/app/build/outputs/bundle/"${BUILD_FLAVOR}${BUILD_TYPE_UPPER}"/"app-${BUILD_FLAVOR}-${BUILD_TYPE_LOWER}.aab" \
-             "${ARTIFACTS_DIR}/${REV_NAME}.aab" || echo "AAB not found"
-
-          ls -la "${ARTIFACTS_DIR}/"
+        run: ./.ci/android/package.sh
 
       - name: Upload Android artifacts
         uses: forgejo/upload-artifact@v4
