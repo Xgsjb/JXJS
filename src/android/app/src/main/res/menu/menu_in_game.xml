@@ -28,7 +28,6 @@
         android:icon="@drawable/ic_two_users"
         android:title="@string/multiplayer" />
 
-
     <item
         android:id="@+id/menu_overlay_controls"
         android:icon="@drawable/ic_overlay"
@@ -38,6 +37,14 @@
         android:id="@+id/menu_lock_drawer"
         android:icon="@drawable/ic_unlock"
         android:title="@string/emulation_input_overlay" />
+
+    <!-- 新增的拉伸全屏开关 -->
+    <item
+        android:id="@+id/menu_stretch_fullscreen"
+        android:icon="@drawable/ic_stretch"
+        android:title="@string/stretch_to_fullscreen"
+        android:checkable="true"
+        tools:ignore="HardcodedText" />
 
     <item
         android:id="@+id/menu_exit"
