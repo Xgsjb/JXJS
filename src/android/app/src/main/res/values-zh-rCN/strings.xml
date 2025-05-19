@@ -646,6 +646,7 @@
 
     <!-- Emulation Menu -->
     <string name="emulation_exit">退出模拟</string>
+    <string name="stretch_to_fullscreen">拉伸至全屏</string>
     <string name="emulation_done">完成</string>
     <string name="emulation_fps_counter">FPS 计数器</string>
     <string name="emulation_thermal_indicator">温度指示器</string>
