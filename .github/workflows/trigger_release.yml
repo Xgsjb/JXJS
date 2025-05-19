@@ -105,90 +105,82 @@ jobs:
           path: ./*.AppImage*
 
   android:
-    runs-on: android
-
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_android == 'true' || github.event_name == 'push' }}
     env:
-      CCACHE_DIR: /home/runner/.cache/ccache
-      CCACHE_COMPILERCHECK: content
-      CCACHE_SLOPPINESS: time_macros
-      OS: android
-      TARGET: universal
-
+      CCACHE_DIR: ${{ runner.workspace }}/.cache/ccache
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
           fetch-tags: true
 
-      - name: Set tag name
+      - name: Cache setup
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ${{ env.ANDROID_HOME }}
+            ${{ env.CCACHE_DIR }}
+          key: android-${{ runner.os }}-${{ hashFiles('**/build.gradle') }}
+
+      - name: Versioning
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-              echo "GIT_TAG_NAME=$GITHUB_REF_NAME" >> $GITHUB_ENV
+            echo "VERSION=$GITHUB_REF_NAME" >> $GITHUB_ENV
+          else
+            echo "VERSION=nightly-$(date +%Y%m%d)" >> $GITHUB_ENV
           fi
-          echo $GIT_TAG_NAME
 
-      - name: Build
-        run: ANDROID_HOME=/opt/android-sdk ./.ci/android/build.sh
+      - name: Setup JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: 17
+          distribution: temurin
 
-      - name: Package Android artifacts
+      - name: Build APK/AAB
+        run: ./.ci/android/build.sh
+
+      - name: Package artifacts
         run: ./.ci/android/package.sh
 
-      - name: Upload Android artifacts
-        uses: forgejo/upload-artifact@v4
+      - name: Upload builds
+        uses: actions/upload-artifact@v4
         with:
-          name: android.zip
-          path: artifacts/*
+          name: android-${{ env.VERSION }}
+          path: |
+            artifacts/*.apk
+            artifacts/*.aab
+          retention-days: 7
 
   create_release:
-    needs: [linux, windows, android]
-    runs-on: linux
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-
+    needs: 
+      - linux
+      - windows
+      - android
+    if: ${{ github.event_name == 'push' }}  # 仅标签推送时创建Release
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: 'recursive'
-          path: 'eden-source'
-
       - name: Download artifacts
-        uses: forgejo/download-artifact@v4
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Grab and store version
+      - name: Prepare release
         run: |
-          cd eden-source
-          tag_name=$(git describe --tags --abbrev=0)
-          echo "VERSION=$tag_name" >> $GITHUB_ENV
-          echo $tag_name
-
-      - name: Package artifacts properly
-        shell: bash
-        run: |
-          set -ex
-          mv ${{ github.workspace }}/eden-source eden-${{ env.VERSION }}
-          cd artifacts
-          ls *.zip
-
           mkdir -p dist
-
-          cp linux.zip/Eden-*.AppImage dist/Eden-Linux-${{ env.VERSION }}-amd64.AppImage
-          cp linux.zip/Eden-*.AppImage.zsync dist/Eden-Linux-${{ env.VERSION }}-amd64.AppImage.zsync
-          cp msvc.zip/eden-windows-msvc*.zip dist/Eden-Windows-MSVC-${{ env.VERSION }}-amd64.zip
-          cp android.zip/eden-android*.apk dist/Eden-Android-${{ env.VERSION }}.apk
-          cp android.zip/eden-android*.aab dist/Eden-Android-${{ env.VERSION }}.aab
-          cp source.zip/eden-unified-source*.tar.xz dist/Eden-Source-${{ env.VERSION }}.tar.xz
-          cp source.zip/eden-unified-source*.tar.xz.sha256sum dist/Eden-Source-${{ env.VERSION }}.tar.xz.sha256sum
+          find artifacts -name '*.AppImage*' -exec cp {} dist \;
+          find artifacts -name 'msvc.zip' -exec unzip -j {} '*.zip' -d dist \;
+          cp artifacts/android-*/{*.apk,*.aab} dist/
 
       - name: Create release
-        id: create_release
-        uses: actions/forgejo-release@v2.6.0
+        uses: softprops/action-gh-release@v1
         with:
-          direction: upload
-          tag: ${{ env.VERSION }}
-          title: Eden ${{ env.VERSION }}
-          release-dir: artifacts/dist/
+          tag_name: ${{ needs.create_release.outputs.tag }}
+          files: |
+            dist/*.AppImage
+            dist/*.zip
+            dist/*.apk
+            dist/*.aab
+```
