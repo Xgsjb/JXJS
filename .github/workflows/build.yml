@@ -1,112 +1,13 @@
-# TODO: This document needs to be formatted,
-# some stuff needs cleaned up etc
-name: eden-build
+name: Android CI
 
 on:
+  workflow_dispatch:    # 添加手动触发入口
   push:
-    branches: [ "master" ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
-# TODO: combine build.yml into trigger_release.yml
 jobs:
-  source:
-    if: ${{ !github.head_ref }}
-    runs-on: linux
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Pack
-        run: ./.ci/source.sh
-      - name: Upload
-        uses: forgejo/upload-artifact@v4
-        with:
-          name: source.zip
-          path: artifacts/
-
-  windows:
-    runs-on: windows
-    strategy:
-      matrix:
-        target: ["msvc"] # TODO: Add msys2
-    defaults:
-      run:
-        shell: ${{ (matrix.target == 'msys2' && 'msys2') || 'bash' }} {0}
-    env:
-      CCACHE_DIR: ${{ runner.workspace }}/.cache/.ccache
-      CCACHE_COMPILERCHECK: content
-      CCACHE_SLOPPINESS: time_macros
-      OS: windows
-      TARGET: ${{ matrix.target }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Set up vcpkg cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/build/vcpkg_installed
-            ${{ github.workspace }}/build/externals
-            ${{ github.workspace }}/.vcpkg
-          key: ${{ runner.os }}-${{ matrix.target }}-vcpkg-${{ hashFiles('**/CMakeLists.txt', '**/vcpkg.json') }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-vcpkg-
-
-      - name: Set up MSVC
-        uses: https://github.com/ilammy/msvc-dev-cmd@v1
-        if: ${{ matrix.target == 'msvc' }}
-
-      - name: Cygwin with autoconf # NEEDED FOR LIBUSB
-        shell: cmd
-        run: ./.ci/windows/cygwin.bat
-
-      - name: Configure & Build
-        id: cmake
-        shell: cmd
-        run: ./.ci/windows/build-bqt.bat amd64 yes
-
-      - name: Package artifacts
-        shell: powershell
-        run: ./.ci/windows/package.ps1 amd64 yes
-
-      - name: Upload Windows artifacts
-        uses: forgejo/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}.zip
-          path: artifacts/*
-
-  linux:
-    runs-on: linux
-    env:
-      CCACHE_DIR: /home/runner/.cache/ccache
-      CCACHE_COMPILERCHECK: content
-      CCACHE_SLOPPINESS: time_macros
-      OS: linux
-      TARGET: fresh
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Build
-        run: TARGET=appimage ./.ci/linux/build.sh v3 8
-
-      - name: Package AppImage
-        run: ./.ci/linux/package.sh v3 &> /dev/null
-
-      - name: Upload Linux artifacts
-        uses: forgejo/upload-artifact@v4
-        with:
-          name: linux.zip
-          path: ./*.AppImage
-
   android:
     runs-on: android
 
