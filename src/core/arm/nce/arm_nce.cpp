@@ -3,7 +3,9 @@
 
 #include <cinttypes>
 #include <memory>
+#include <sys/mman.h>
 
+#include "common/logging/log.h"
 #include "common/signal_chain.h"
 #include "core/arm/nce/arm_nce.h"
 #include "core/arm/nce/interpreter_visitor.h"
@@ -42,6 +44,54 @@ using namespace Common::Literals;
 constexpr u32 StackSize = 128_KiB;
 
 } // namespace
+
+// Implementation of the enhanced features inspired by Ryujinx NCE
+
+void ArmNce::SetupAlternateSignalStack() {
+    // Create an alternate stack for signal handling
+    // This ensures we have a clean stack for handling signals even if the guest stack is corrupted
+    m_alt_signal_stack = std::make_unique<u8[]>(AlternateStackSize);
+
+    stack_t ss{};
+    ss.ss_sp = m_alt_signal_stack.get();
+    ss.ss_size = AlternateStackSize;
+    ss.ss_flags = 0;
+
+    if (sigaltstack(&ss, nullptr) != 0) {
+        LOG_ERROR(Core_ARM, "Failed to setup alternate signal stack: {}", strerror(errno));
+    } else {
+        LOG_DEBUG(Core_ARM, "Alternate signal stack set up successfully");
+    }
+}
+
+void ArmNce::CleanupAlternateSignalStack() {
+    if (m_alt_signal_stack) {
+        stack_t ss{};
+        ss.ss_flags = SS_DISABLE;
+
+        if (sigaltstack(&ss, nullptr) != 0) {
+            LOG_ERROR(Core_ARM, "Failed to disable alternate signal stack: {}", strerror(errno));
+        }
+
+        m_alt_signal_stack.reset();
+    }
+}
+
+bool ArmNce::HandleThreadInterrupt(GuestContext* ctx) {
+    // Check if an interrupt was requested
+    if (ctx->interrupt_requested.load(std::memory_order_acquire) != 0) {
+        // Clear the interrupt request
+        ctx->interrupt_requested.store(0, std::memory_order_release);
+
+        // Add break loop reason to indicate we should exit
+        ctx->esr_el1.fetch_or(static_cast<u64>(HaltReason::BreakLoop));
+
+        // Indicate we handled an interrupt
+        return true;
+    }
+
+    return false;
+}
 
 void* ArmNce::RestoreGuestContext(void* raw_context) {
     // Retrieve the host context.
@@ -268,9 +318,18 @@ void ArmNce::SetSvcArguments(std::span<const uint64_t, 8> args) {
 ArmNce::ArmNce(System& system, bool uses_wall_clock, std::size_t core_index)
     : ArmInterface{uses_wall_clock}, m_system{system}, m_core_index{core_index} {
     m_guest_ctx.system = &m_system;
+    m_guest_ctx.parent = this;
+
+    // Initialize as being in managed code
+    m_guest_ctx.in_managed.store(1, std::memory_order_release);
 }
 
-ArmNce::~ArmNce() = default;
+ArmNce::~ArmNce() {
+    // Clean up alternate signal stack
+    CleanupAlternateSignalStack();
+
+    // Host mapped memory will be cleaned up by its destructor
+}
 
 void ArmNce::Initialize() {
     if (m_thread_id == -1) {
@@ -285,6 +344,16 @@ void ArmNce::Initialize() {
         ss.ss_sp = m_stack.get();
         ss.ss_size = StackSize;
         sigaltstack(&ss, nullptr);
+    }
+
+    // Set up alternate signal stack (Ryujinx-inspired enhancement)
+    SetupAlternateSignalStack();
+
+    // Initialize host-mapped memory for efficient access
+    if (!m_host_mapped_memory) {
+        auto& memory = m_system.ApplicationMemory();
+        m_host_mapped_memory = std::make_unique<HostMappedMemory>(memory);
+        LOG_DEBUG(Core_ARM, "Initialized host-mapped memory for NCE");
     }
 
     // Set up signals.
@@ -365,19 +434,23 @@ void ArmNce::SetContext(const Kernel::Svc::ThreadContext& ctx) {
 }
 
 void ArmNce::SignalInterrupt(Kernel::KThread* thread) {
-    // Add break loop condition.
+    // Mark that we're requesting an interrupt
+    m_guest_ctx.interrupt_requested.store(1, std::memory_order_release);
+
+    // Add break loop condition
     m_guest_ctx.esr_el1.fetch_or(static_cast<u64>(HaltReason::BreakLoop));
 
-    // Lock the thread context.
+    // Lock the thread context
     auto* params = &thread->GetNativeExecutionParameters();
     LockThreadParameters(params);
 
-    if (params->is_running) {
-        // We should signal to the running thread.
-        // The running thread will unlock the thread context.
+    // Only send a signal if the thread is running and not in managed code
+    if (params->is_running && m_guest_ctx.in_managed.load(std::memory_order_acquire) == 0) {
+        // Send signal to the running thread
+        // The running thread will unlock the thread context
         syscall(SYS_tkill, m_thread_id, BreakFromRunCodeSignal);
     } else {
-        // If the thread is no longer running, we have nothing to do.
+        // If the thread is no longer running or is in managed code, we unlock
         UnlockThreadParameters(params);
     }
 }
@@ -402,21 +475,54 @@ void ArmNce::ClearInstructionCache() {
 }
 
 void ArmNce::InvalidateCacheRange(u64 addr, std::size_t size) {
-    #if defined(__GNUC__) || defined(__clang__)
-        // Align the start address to cache line boundary for better performance
-        const size_t CACHE_LINE_SIZE = 64;
-        addr &= ~(CACHE_LINE_SIZE - 1);
+#if defined(__GNUC__) || defined(__clang__)
+    while (size > 0) {
+        const std::size_t size_step = std::min(size, CACHE_PAGE_SIZE);
 
-        // Round up size to nearest cache line
-        size = (size + CACHE_LINE_SIZE - 1) & ~(CACHE_LINE_SIZE - 1);
+        // The __builtin___clear_cache intrinsic generates icache(i) invalidation and dcache(d)
+        // write-back instructions targeting the range.
+        char* addr_ptr = reinterpret_cast<char*>(addr);
+        __builtin___clear_cache(addr_ptr, addr_ptr + size_step);
 
-        // Prefetch the range to be invalidated
-        for (size_t offset = 0; offset < size; offset += CACHE_LINE_SIZE) {
-            __builtin_prefetch((void*)(addr + offset), 1, 3);
-        }
-    #endif
+        addr += size_step;
+        size -= size_step;
+    }
 
+    // Clear instruction cache after range invalidation
     this->ClearInstructionCache();
+#endif
 }
+
+// Fast memory access template implementation (inspired by Ryujinx)
+template <typename T>
+T& ArmNce::GetHostRef(u64 guest_addr) {
+    if (m_host_mapped_memory) {
+        // Use the host-mapped memory for fast access
+        try {
+            return m_host_mapped_memory->GetRef<T>(guest_addr);
+        } catch (const std::exception& e) {
+            LOG_ERROR(Core_ARM, "Failed to get host reference: {}", e.what());
+        }
+    }
+
+    // Fallback to slower memory access
+    T value{};
+    m_system.ApplicationMemory().ReadBlock(guest_addr, &value, sizeof(T));
+    static thread_local T fallback;
+    fallback = value;
+    return fallback;
+}
+
+// Explicit instantiations for common types
+template u8& ArmNce::GetHostRef<u8>(u64);
+template u16& ArmNce::GetHostRef<u16>(u64);
+template u32& ArmNce::GetHostRef<u32>(u64);
+template u64& ArmNce::GetHostRef<u64>(u64);
+template s8& ArmNce::GetHostRef<s8>(u64);
+template s16& ArmNce::GetHostRef<s16>(u64);
+template s32& ArmNce::GetHostRef<s32>(u64);
+template s64& ArmNce::GetHostRef<s64>(u64);
+template f32& ArmNce::GetHostRef<f32>(u64);
+template f64& ArmNce::GetHostRef<f64>(u64);
 
 } // namespace Core

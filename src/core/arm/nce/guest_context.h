@@ -38,6 +38,12 @@ struct GuestContext {
     u32 svc{};
     System* system{};
     ArmNce* parent{};
+
+    // Enhanced thread control (inspired by Ryujinx)
+    std::atomic<u32> in_managed{1};         // 1 when in managed code, 0 when in native
+    std::atomic<u32> interrupt_requested{0}; // Set when interrupt requested
+    pid_t host_thread_id{-1};              // Host thread ID for signaling
+    u64 ctr_el0{0x8444c004};               // Cache type register
 };
 
 // Verify assembly offsets.

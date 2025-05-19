@@ -7,6 +7,7 @@
 
 #include "core/arm/arm_interface.h"
 #include "core/arm/nce/guest_context.h"
+#include "core/arm/nce/host_mapped_memory.h"
 
 namespace Core::Memory {
 class Memory;
@@ -52,6 +53,10 @@ protected:
 
     void RewindBreakpointInstruction() override {}
 
+    // Fast memory access using host-mapped memory (inspired by Ryujinx)
+    template <typename T>
+    T& GetHostRef(u64 guest_addr);
+
 private:
     // Assembly definitions.
     static HaltReason ReturnToRunCodeByTrampoline(void* tpidr, GuestContext* ctx,
@@ -66,6 +71,13 @@ private:
 
     static void LockThreadParameters(void* tpidr);
     static void UnlockThreadParameters(void* tpidr);
+
+    // Alternate stack management (inspired by Ryujinx)
+    void SetupAlternateSignalStack();
+    void CleanupAlternateSignalStack();
+
+    // Enhanced signal handling
+    static bool HandleThreadInterrupt(GuestContext* ctx);
 
 private:
     // C++ implementation functions for assembly definitions.
@@ -90,6 +102,13 @@ public:
 
     // Stack for signal processing.
     std::unique_ptr<u8[]> m_stack{};
+
+    // Alternate signal stack (inspired by Ryujinx)
+    static constexpr size_t AlternateStackSize = 16384;
+    std::unique_ptr<u8[]> m_alt_signal_stack{};
+
+    // Host mapped memory for efficient access (inspired by Ryujinx)
+    std::unique_ptr<HostMappedMemory> m_host_mapped_memory{};
 };
 
 } // namespace Core
